@@ -1,8 +1,8 @@
-name: APK ABI denetimi
+name: APK denetimi (ABI + native uyumluluk)
 
-# Release'teki APK'nın hangi CPU mimarileri için yerel kütüphane içerdiğini,
-# min/target SDK ve manifest özelliklerini raporlar (Wear OS uyumu için).
-# Sonuç reports/apk-inspect.md dosyasına yazılıp depoya commit edilir.
+# Release'teki APK'nın CPU mimarileri, yerel kütüphane eşliği, sıkıştırma
+# yöntemi, sayfa hizası ve tam manifest bilgisini raporlar.
+# Sonuçlar reports/ altına yazılıp depoya commit edilir.
 
 on:
   workflow_dispatch:
@@ -35,7 +35,7 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.apk" --dir .
           ls -l ./*.apk
 
-      - name: Raporu olustur
+      - name: Temel rapor
         run: |
           set -euo pipefail
           APK=$(ls ./*.apk | head -1)
@@ -62,29 +62,70 @@ jobs:
             done
             echo '```'
             echo
-            echo "## En buyuk .so dosyalari"
+            echo "## Iki ABI arasinda kutuphane esligi (parity)"
             echo '```'
-            unzip -l "$APK" | grep '\.so$' | sort -k1 -n -r | head -15
+            unzip -l "$APK" | awk '{print $4}' | grep '^lib/arm64-v8a/.*\.so$' | sed 's|lib/arm64-v8a/||' | sort > /tmp/a64.txt
+            unzip -l "$APK" | awk '{print $4}' | grep '^lib/armeabi-v7a/.*\.so$' | sed 's|lib/armeabi-v7a/||' | sort > /tmp/a32.txt
+            echo "arm64-v8a: $(wc -l < /tmp/a64.txt) dosya, armeabi-v7a: $(wc -l < /tmp/a32.txt) dosya"
+            echo "--- yalnizca 64-bit ---"; comm -23 /tmp/a64.txt /tmp/a32.txt
+            echo "--- yalnizca 32-bit ---"; comm -13 /tmp/a64.txt /tmp/a32.txt
+            echo '```'
+            echo
+            echo "## Yerel kutuphanelerin APK icinde saklanma bicimi"
+            echo '```'
+            unzip -v "$APK" | grep -E "lib/(arm64-v8a|armeabi-v7a)/(libil2cpp|libunity|libc\+\+_shared)\.so" | head -10
+            echo '```'
+            echo
+            echo "## ELF sayfa hizasi (16 KB sayfa destegi icin kritik)"
+            echo '```'
+            for abi in arm64-v8a armeabi-v7a; do
+              for lib in libil2cpp.so libunity.so; do
+                unzip -o -q "$APK" "lib/$abi/$lib" -d /tmp/ex || continue
+                echo "-- $abi/$lib"
+                readelf -lW "/tmp/ex/lib/$abi/$lib" 2>/dev/null | awk '/LOAD/ {print $NF}' | sort -u | tr '\n' ' '
+                echo
+              done
+            done
             echo '```'
             echo
             echo "## aapt badging"
             echo '```'
             "$AAPT" dump badging "$APK" 2>/dev/null | grep -E "package:|sdkVersion|targetSdkVersion|native-code|uses-feature|densities|launchable-activity" | head -40 || true
             echo '```'
-            echo
-            echo "## Manifest: GL / donanim gereksinimleri"
-            echo '```'
-            "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" 2>/dev/null | grep -iE "glEsVersion|touchscreen|watch|uses-feature|required" | head -40 || true
-            echo '```'
           } > "$R"
           cat "$R"
+
+      - name: Tam manifest dokumu
+        run: |
+          set -euo pipefail
+          APK=$(ls ./*.apk | head -1)
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+          "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" > reports/apk-manifest.txt 2>&1 || true
+          wc -l reports/apk-manifest.txt
+
+      - name: Ilk 200 satirlik manifest ozeti
+        run: |
+          set -euo pipefail
+          {
+            echo
+            echo "## Manifest ozeti (ilk bolum)"
+            echo '```'
+            head -120 reports/apk-manifest.txt
+            echo '```'
+            echo
+            echo "## Manifestte dikkat ceken anahtarlar"
+            echo '```'
+            grep -iE "extractNativeLibs|usesCleartextTraffic|debuggable|type.watch|hardware.type|largeHeap|resizeableActivity|isolatedSplits|hasCode|multiArch|permission name|uses-sdk|minSdk|targetSdk" reports/apk-manifest.txt | head -60
+            echo '```'
+          } >> reports/apk-inspect.md
+          tail -70 reports/apk-inspect.md
 
       - name: Raporu commit et
         run: |
           set -euo pipefail
           git config user.name "apk-inspect-bot"
           git config user.email "apk-inspect-bot@users.noreply.github.com"
-          git add reports/apk-inspect.md
+          git add reports
           git diff --cached --quiet && { echo "Degisiklik yok"; exit 0; }
           git commit -m "APK denetim raporu ($TAG)"
           git push origin "HEAD:${GITHUB_REF_NAME}"
