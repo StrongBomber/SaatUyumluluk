@@ -52,6 +52,33 @@ Mali-G68 GPU nedeniyle oyun açılsa bile oynanabilirlik ve akıcılık sınırl
 ayrıca APK'da `android.hardware.type.watch` bildirilmediği için Google Play
 üzerinden kurulamaz, yalnızca ADB ile yüklenebilir.
 
+### Saatte çökme (crash) teşhisi
+
+Statik olarak elenenler (bkz. `reports/apk-inspect.md`): ABI eşliği tam (22/22
+`.so`, iki mimaride de aynı), ELF sayfa hizası `0x4000` (16 KB sayfa uyumlu),
+`extractNativeLibs=true` (sıkıştırılmış kütüphaneler kurulumda açılır),
+`minSdk 24` / `targetSdk 36`, `resizeableActivity=true`.
+
+Yani crash ABI/kurulum kaynaklı değil; runtime kaynaklı. Kanıt için logcat gerekir:
+
+```bash
+./scripts/watch-crash-report.sh <saat-ip>:<port>
+# -> reports/watch-crash-<tarih>.txt  (dosyayı paylaş)
+```
+
+PC yoksa telefondan: **Bugjaeger** (ADB over Wi-Fi) veya **Wear Installer 2**
+ile `logcat` sekmesinden aynı kayıt alınabilir.
+
+Sık görülen nedenler ve hızlı testler:
+
+| Belirti (logcat) | Neden | Hızlı test |
+| --- | --- | --- |
+| `lowmemorykiller`, `Killing ... (xxxMB)` | 2 GB RAM'de Unity + büyük sahneler | Arka plan uygulamalarını kapat, saati yeniden başlat, tekrar dene |
+| `FATAL EXCEPTION` + AdMob/Firebase/Play Games | Saatte olmayan GMS modülü / reklam SDK'sı | `adb shell svc wifi disable` ile çevrimdışı başlat |
+| `Fatal signal 11 (SIGSEGV)` / `SIGABRT` | GPU sürücüsü, EGL/GLES yapılandırması, il2cpp | `adb shell wm density 240` ve `wm size 480x480` ile dene |
+| `dlopen failed` / `UnsatisfiedLinkError` | Yanlış ABI seçimi | `adb install -r --abi arm64-v8a ...` (abilist'te varsa) |
+| `ANR in com.kiloo.subwaysurf` | Aşırı yavaş ilk yükleme | Bekle, önbellek ısınsın; tekrar dene |
+
 ### Yeni bir APK nasıl eklenir?
 
 İki yol var:
