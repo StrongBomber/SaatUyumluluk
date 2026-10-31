@@ -1,0 +1,76 @@
+name: APK ABI denetimi
+
+# Release'teki APK'nın hangi CPU mimarileri için yerel kütüphane içerdiğini,
+# min/target SDK ve manifest özelliklerini raporlar (Wear OS uyumu için).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release etiketi"
+        required: false
+        default: "apk-v3.70.3"
+  push:
+    paths:
+      - ".github/apk-inspect-trigger"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag || 'apk-v3.70.3' }}
+
+    steps:
+      - name: APK'yi release'ten indir
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.apk" --dir .
+          ls -l ./*.apk
+
+      - name: ABI envanteri
+        run: |
+          set -euo pipefail
+          APK=$(ls ./*.apk | head -1)
+          echo "== lib/ altindaki ABI klasorleri =="
+          unzip -l "$APK" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort | uniq -c
+          echo
+          echo "== ABI basina toplam boyut =="
+          for abi in $(unzip -l "$APK" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort -u); do
+            BYTES=$(unzip -l "$APK" | awk -v a="lib/$abi/" '$4 ~ "^"a {s+=$1} END {print s+0}')
+            echo "$abi: $BYTES bayt ($(( BYTES / 1024 / 1024 )) MiB)"
+          done
+          echo
+          echo "== En buyuk .so dosyalari =="
+          unzip -l "$APK" | grep '\.so$' | sort -k1 -n -r | head -15
+
+      - name: Manifest bilgisi
+        run: |
+          set -euo pipefail
+          APK=$(ls ./*.apk | head -1)
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+          echo "aapt2: $AAPT"
+          "$AAPT" dump badging "$APK" 2>/dev/null | grep -E "package:|sdkVersion|targetSdkVersion|native-code|uses-feature|densities|launchable-activity" | head -40 || true
+          echo
+          echo "== GPU / ekran gereksinimleri (manifest) =="
+          "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" 2>/dev/null | grep -iE "glEsVersion|required|touchscreen|watch" | head -30 || true
+
+      - name: Ozet
+        run: |
+          set -euo pipefail
+          APK=$(ls ./*.apk | head -1)
+          ABI_LIST=$(unzip -l "$APK" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort -u | paste -sd, -)
+          {
+            echo "### APK ABI denetimi"
+            echo ""
+            echo "- APK: $(basename "$APK") ($(stat -c %s "$APK") bayt)"
+            echo "- ABIs: $ABI_LIST"
+            echo ""
+            echo '```'
+            unzip -l "$APK" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort | uniq -c
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
