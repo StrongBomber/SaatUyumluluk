@@ -237,6 +237,12 @@ jobs:
               unzip -l "$f" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort | uniq -c
               "$BT/apksigner" verify --print-certs "$f" 2>/dev/null | head -3 || true
               "$BT/aapt2" dump badging "$f" 2>/dev/null | grep -E "package:|sdkVersion|targetSdkVersion|native-code|uses-feature" | head -12 || true
+              echo "--- manifest dogrulama ---"
+              "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$f" > /tmp/m.txt 2>/dev/null || true
+              echo "configChanges iceren activity: $(grep -c 'android:configChanges' /tmp/m.txt || true)"
+              echo "largeHeap: $(grep -c 'android:largeHeap' /tmp/m.txt || true)"
+              echo "type.watch: $(grep -c 'android.hardware.type.watch' /tmp/m.txt || true)"
+              echo "ornek configChanges satiri: $(grep -m1 'android:configChanges' /tmp/m.txt || true)"
               echo '```'
               echo
             } >> "$R"
