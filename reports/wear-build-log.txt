@@ -25,6 +25,7 @@ android:theme="@style/UnityThemeSelector"
 android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen"
 android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen"
 grep: write error: Broken pipe
+configChanges eklenen activity sayisi: 99
 manifest guncellendi
 application theme: UnityThemeSelector
 tema yamalandi: dec/res/values/styles.xml
@@ -45,7 +46,7 @@ I: Importing assets...
 I: Importing lib...
 I: Importing unknown files...
 I: Built apk into: ready-unsigned.apk
--rw-r--r-- 1 runner runner 236682074 Nov  1 09:56 ready-unsigned.apk
+-rw-r--r-- 1 runner runner 236682057 Nov  1 14:14 ready-unsigned.apk
 Verifies
 Verified using v1 scheme (JAR signing): false
 Verified using v2 scheme (APK Signature Scheme v2): true
