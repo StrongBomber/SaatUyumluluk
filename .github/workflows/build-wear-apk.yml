@@ -1,0 +1,205 @@
+name: Wear APK varyantlari uret
+
+# Kaynak APK'dan Wear OS (Galaxy Watch 8, 32-bit) icin iki varyant uretir:
+#   A) wear-v7a      : yalnizca armeabi-v7a kutuphaneleri (arm64-v8a cikarilir) + yeniden imza
+#   B) wear-ready    : A + manifest/theme duzeltmeleri
+#                      - android:windowSwipeToDismiss=false (saga kaydirinca uygulama kapanmasin)
+#                      - android:largeHeap=true
+#                      - uses-feature android.hardware.type.watch (required=false)
+# Cikti: wear-v3.70.3 release'ine asset olarak yuklenir + reports/wear-build.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Kaynak release etiketi"
+        required: false
+        default: "apk-v3.70.3"
+  push:
+    paths:
+      - ".github/build-wear-trigger"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SRC_TAG: ${{ inputs.tag || 'apk-v3.70.3' }}
+      OUT_TAG: wear-v3.70.3
+      KS_PASS: wearapk2026
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kaynak APK'yi indir
+        run: |
+          set -euo pipefail
+          mkdir -p work && cd work
+          gh release download "$SRC_TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.apk" --dir .
+          ls -l
+          SRC=$(ls ./*.apk | head -1)
+          cp "$SRC" app-src.apk
+          echo "SRC=$PWD/app-src.apk" >> "$GITHUB_ENV"
+
+      - name: Arac zinciri (apktool, zipalign, apksigner, keytool)
+        run: |
+          set -euo pipefail
+          java -version || { echo "java yok"; exit 1; }
+          URL=$(curl -sSL https://api.github.com/repos/iBotPeaches/Apktool/releases/latest \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print([a['browser_download_url'] for a in d['assets'] if a['name'].startswith('apktool_') and a['name'].endswith('.jar')][0])")
+          echo "apktool: $URL"
+          curl -sSL -o apktool.jar "$URL"
+          echo "APKTOOL=$PWD/apktool.jar" >> "$GITHUB_ENV"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "BT=$BT" >> "$GITHUB_ENV"
+          echo "zipalign: $BT/zipalign"
+          echo "apksigner: $BT/apksigner"
+          "$BT/zipalign" 2>&1 | head -2 || true
+
+      - name: Imza anahtari
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -keystore wear.jks -alias wear -keyalg RSA -keysize 2048 \
+            -validity 10000 -storepass "$KS_PASS" -keypass "$KS_PASS" \
+            -dname "CN=Wear APK, OU=Saat, O=Yerel, L=Istanbul, C=TR" 2>&1 | tail -3
+          echo "KS=$PWD/wear.jks" >> "$GITHUB_ENV"
+
+      - name: Varyant A - yalnizca arm64-v8a cikar
+        run: |
+          set -euo pipefail
+          cd work
+          cp app-src.apk v7a-unsigned.apk
+          zip -d v7a-unsigned.apk 'lib/arm64-v8a/*' >/dev/null
+          echo "-- kalan ABI klasorleri --"
+          unzip -l v7a-unsigned.apk | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort | uniq -c
+          "$BT/zipalign" -f -p 4 v7a-unsigned.apk v7a-aligned.apk
+          "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
+            --out Subway+Surfers_3.70.3_wear-v7a.apk v7a-aligned.apk
+          "$BT/apksigner" verify --verbose Subway+Surfers_3.70.3_wear-v7a.apk | head -8
+          ls -l Subway+Surfers_3.70.3_wear-v7a.apk
+
+      - name: Varyant B - manifest + theme duzeltmeleri
+        id: variantb
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cd work
+          java -jar "$APKTOOL" d -s -f app-src.apk -o dec
+          rm -rf dec/lib/arm64-v8a
+
+          echo "-- application android:theme --"
+          grep -o 'android:theme="[^"]*"' dec/AndroidManifest.xml | head -3 || true
+
+          echo "-- manifest duzeltmeleri --"
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("dec/AndroidManifest.xml")
+          s = p.read_text(encoding="utf-8")
+
+          # largeHeap ekle (yoksa)
+          if 'android:largeHeap' not in s:
+              s = s.replace('<application', '<application android:largeHeap="true"', 1)
+
+          # watch feature ekle (yoksa) - application'dan once
+          if 'android.hardware.type.watch' not in s:
+              s = s.replace('<application',
+                  '<uses-feature android:name="android.hardware.type.watch" android:required="false" />\n    <application', 1)
+
+          p.write_text(s, encoding="utf-8")
+          print("manifest guncellendi")
+
+          # Tema dosyalarinda windowSwipeToDismiss=false ekle
+          changed = []
+          for f in pathlib.Path("dec/res").rglob("*.xml"):
+              try:
+                  t = f.read_text(encoding="utf-8")
+              except Exception:
+                  continue
+              if "<style" not in t or "windowSwipeToDismiss" in t:
+                  continue
+              # Her <style ...> blogunun icine ekle
+              new = re.sub(r"(<style\b[^>]*>)", r"\1\n        <item name=\"android:windowSwipeToDismiss\">false</item>", t)
+              if new != t:
+                  f.write_text(new, encoding="utf-8")
+                  changed.append(str(f))
+          print("tema dosyalari:", len(changed))
+          for c in changed[:10]:
+              print("  ", c)
+          PY
+
+          echo "-- yeniden paketle --"
+          if ! java -jar "$APKTOOL" b dec -o ready-unsigned.apk 2>&1 | tail -5; then
+            echo "ilk deneme basarisiz, --use-aapt2 ile tekrar"
+            java -jar "$APKTOOL" b dec -o ready-unsigned.apk --use-aapt2 2>&1 | tail -5
+          fi
+          ls -l ready-unsigned.apk
+
+          "$BT/zipalign" -f -p 4 ready-unsigned.apk ready-aligned.apk
+          "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
+            --out Subway+Surfers_3.70.3_wear-ready.apk ready-aligned.apk
+          "$BT/apksigner" verify --verbose Subway+Surfers_3.70.3_wear-ready.apk | head -8
+          ls -l Subway+Surfers_3.70.3_wear-ready.apk
+
+      - name: Uretilenleri dogrula
+        run: |
+          set -euo pipefail
+          cd work
+          mkdir -p ../reports
+          R=../reports/wear-build.md
+          {
+            echo "# Wear varyantlari"
+            echo
+            echo "- Kaynak: $SRC_TAG / Subway+Surfers_3.70.3_APKPure.apk"
+            echo "- Imza: yerel test anahtari (Play/Play Games imzasi degil)"
+            echo
+          } > "$R"
+          for f in Subway+Surfers_3.70.3_wear-v7a.apk Subway+Surfers_3.70.3_wear-ready.apk; do
+            [ -f "$f" ] || { echo "## $f — URETILEMEDI" >> "$R"; echo >> "$R"; continue; }
+            {
+              echo "## $f"
+              echo '```'
+              echo "boyut: $(stat -c %s "$f") bayt"
+              echo "sha256: $(sha256sum "$f" | cut -d' ' -f1)"
+              unzip -l "$f" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort | uniq -c
+              "$BT/apksigner" verify --print-certs "$f" 2>/dev/null | head -3 || true
+              "$BT/aapt2" dump badging "$f" 2>/dev/null | grep -E "package:|sdkVersion|targetSdkVersion|native-code|uses-feature" | head -12 || true
+              echo '```'
+              echo
+            } >> "$R"
+          done
+          cat "$R"
+
+      - name: Release'e yukle
+        run: |
+          set -euo pipefail
+          cd work
+          if ! gh release view "$OUT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$OUT_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Subway Surfers 3.70.3 — Wear OS (32-bit) varyantlari" \
+              --notes "Galaxy Watch 8 / Wear OS icin hazirlanmis varyantlar.
+
+- \`wear-v7a\`: yalnizca armeabi-v7a kutuphaneleri, yeniden imzali (~160 MB)
+- \`wear-ready\`: wear-v7a + windowSwipeToDismiss=false + largeHeap + watch feature
+
+Kurulum: once \`adb uninstall com.kiloo.subwaysurf\` (imza farkli), sonra
+\`adb install -r --abi armeabi-v7a <dosya>.apk\`"
+          fi
+          gh release upload "$OUT_TAG" ./*_wear-v7a.apk --repo "$GITHUB_REPOSITORY" --clobber 2>/dev/null || true
+          gh release upload "$OUT_TAG" ./*_wear-ready.apk --repo "$GITHUB_REPOSITORY" --clobber 2>/dev/null || true
+          gh release view "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name) \(.size)"'
+
+      - name: Raporu commit et
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name "wear-build-bot"
+          git config user.email "wear-build-bot@users.noreply.github.com"
+          git add reports 2>/dev/null || true
+          git diff --cached --quiet && { echo "Degisiklik yok"; exit 0; }
+          git commit -m "Wear varyant build raporu"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" >/dev/null 2>&1 || true
+          git push origin "HEAD:${GITHUB_REF_NAME}"
