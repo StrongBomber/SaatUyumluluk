@@ -126,6 +126,28 @@ jobs:
           if 'android.hardware.type.watch' not in s:
               s = s.replace('<application',
                   '<uses-feature android:name="android.hardware.type.watch" android:required="false" />\n    <application', 1)
+          # Tum activity'lere configChanges ekle: Wear OS'ta pencere boyutu/yogunluk
+          # degisince activity yeniden olusturulur ve Unity tarafinda cokme yasanir.
+          wanted = ["orientation", "screenSize", "smallestScreenSize", "screenLayout",
+                    "density", "uiMode", "keyboardHidden", "navigation", "fontScale",
+                    "locale", "layoutDirection"]
+
+          def patch_activity(mo):
+              tag = mo.group(0)
+              existing = re.search(r'android:configChanges="([^"]*)"', tag)
+              if existing:
+                  vals = [v for v in existing.group(1).split("|") if v]
+                  merged = sorted(set(vals) | set(wanted))
+                  return tag[:existing.start(1)] + "|".join(merged) + tag[existing.end(1):]
+              attr = ' android:configChanges="' + "|".join(wanted) + '"'
+              if tag.rstrip().endswith("/>"):
+                  return tag.rstrip()[:-2] + attr + " />"
+              return tag.rstrip()[:-1] + attr + ">"
+
+          s2, n = re.subn(r"<activity\b[^>]*>", patch_activity, s)
+          s = s2
+          print("configChanges eklenen activity sayisi:", n)
+
           mpath.write_text(s, encoding="utf-8")
           print("manifest guncellendi")
 
