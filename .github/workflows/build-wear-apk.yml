@@ -15,6 +15,10 @@ on:
         description: "Kaynak release etiketi"
         required: false
         default: "apk-v3.70.3"
+      source_url:
+        description: "Alternatif: dogrudan APK URL'si (dolu ise release indirmesi atlanir)"
+        required: false
+        default: ""
   push:
     paths:
       - ".github/build-wear-trigger"
@@ -29,6 +33,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SRC_TAG: ${{ inputs.tag || 'apk-v3.70.3' }}
+      SOURCE_URL: ${{ inputs.source_url }}
       OUT_TAG: wear-v3.70.3
       KS_PASS: wearapk2026
 
@@ -39,10 +44,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p work && cd work
-          gh release download "$SRC_TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.apk" --dir .
-          ls -l
-          SRC=$(ls ./*.apk | head -1)
-          cp "$SRC" app-src.apk
+          if [ -n "${SOURCE_URL:-}" ]; then
+            echo "Kaynak URL: $SOURCE_URL"
+            curl -fL --retry 3 -o app-src.apk "$SOURCE_URL"
+          else
+            gh release download "$SRC_TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.apk" --dir .
+            SRC=$(ls ./*.apk | head -1)
+            cp "$SRC" app-src.apk
+          fi
+          ls -l app-src.apk
           echo "SRC=$PWD/app-src.apk" >> "$GITHUB_ENV"
 
       - name: Arac zinciri (apktool, zipalign, apksigner, keytool)
