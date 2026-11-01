@@ -177,16 +177,21 @@ jobs:
         run: |
           set -euo pipefail
           cd work
+          NOTES="$RUNNER_TEMP/wear-notes.md"
+          {
+            echo "Galaxy Watch 8 / Wear OS icin hazirlanmis varyantlar."
+            echo
+            echo '- `wear-v7a`: yalnizca armeabi-v7a kutuphaneleri, yeniden imzali (~160 MB)'
+            echo '- `wear-ready`: wear-v7a + windowSwipeToDismiss=false + largeHeap + watch feature'
+            echo
+            echo 'Kurulum: once `adb uninstall com.kiloo.subwaysurf` (imza farkli), sonra:'
+            echo
+            echo '    adb install -r --abi armeabi-v7a <dosya>.apk'
+          } > "$NOTES"
           if ! gh release view "$OUT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$OUT_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Subway Surfers 3.70.3 — Wear OS (32-bit) varyantlari" \
-              --notes "Galaxy Watch 8 / Wear OS icin hazirlanmis varyantlar.
-
-- \`wear-v7a\`: yalnizca armeabi-v7a kutuphaneleri, yeniden imzali (~160 MB)
-- \`wear-ready\`: wear-v7a + windowSwipeToDismiss=false + largeHeap + watch feature
-
-Kurulum: once \`adb uninstall com.kiloo.subwaysurf\` (imza farkli), sonra
-\`adb install -r --abi armeabi-v7a <dosya>.apk\`"
+              --title "Subway Surfers 3.70.3 - Wear OS (32-bit) varyantlari" \
+              --notes-file "$NOTES"
           fi
           gh release upload "$OUT_TAG" ./*_wear-v7a.apk --repo "$GITHUB_REPOSITORY" --clobber 2>/dev/null || true
           gh release upload "$OUT_TAG" ./*_wear-ready.apk --repo "$GITHUB_REPOSITORY" --clobber 2>/dev/null || true
