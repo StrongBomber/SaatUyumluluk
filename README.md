@@ -62,10 +62,21 @@ Release: [wear-v3.70.3](https://github.com/StrongBomber/SaatUyumluluk/releases/t
 
 | Varyant | İçerik | Boyut |
 | --- | --- | --- |
-| `wear-ready` (önerilen) | yalnızca `armeabi-v7a` + `windowSwipeToDismiss=false` + `largeHeap=true` + watch feature | 237.366.524 bayt |
+| `wear-ready` (önerilen) | yalnızca `armeabi-v7a` + `windowSwipeToDismiss=false` + `largeHeap=true` + `configChanges` (99 activity) + watch feature | 237.366.524 bayt |
 | `wear-v7a` | yalnızca `armeabi-v7a` kütüphaneleri | 237.373.315 bayt |
 
-Kurulum (tek komut):
+ADB/terminal olmadan kurulum (telefondan):
+
+1. APK'yı telefona indir (release sayfasındaki `wear-ready` dosyası).
+2. Saatte **Ayarlar → Saat hakkında → Yazılım bilgisi → Yazılım sürümü**'ne 7 kez
+   dokunup **Geliştirici seçenekleri → ADB hata ayıklama + Kablosuz hata ayıklama**
+   aç (saat Wi-Fi'da olsun).
+3. Telefona **Wear Installer 2** (ücretsiz) veya **Wear APK Install** kur; uygulama
+   saati bulup APK'yı doğrudan yükler. (Bugjaeger da olur.)
+4. Eski sürüm kuruluysa önce kaldır: saatte **Ayarlar → Uygulamalar → Subway Surf → Kaldır**
+   (imza farklı olduğu için zorunlu).
+
+Terminal ile kurulum (tek komut):
 
 ```bash
 ./scripts/install-wear-apk.sh ready <saat-ip>:<port>   # veya: v7a
