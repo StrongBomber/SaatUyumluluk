@@ -52,6 +52,29 @@ Mali-G68 GPU nedeniyle oyun açılsa bile oynanabilirlik ve akıcılık sınırl
 ayrıca APK'da `android.hardware.type.watch` bildirilmediği için Google Play
 üzerinden kurulamaz, yalnızca ADB ile yüklenebilir.
 
+### Wear OS varyantları (çökme için hazırlanan düzeltmeli APK'lar)
+
+Galaxy Watch 8 yalnızca `armeabi-v7a`/`armeabi` çalıştırır (32-bit) ve Wear OS'ta
+bilinen iki sorun vardır: **arm64 içeren "universal" paketlerin çökmesi** ve
+**sağa kaydırma jestinin uygulamayı kapatması** (oyunda şerit değiştirme hareketi).
+
+Release: [wear-v3.70.3](https://github.com/StrongBomber/SaatUyumluluk/releases/tag/wear-v3.70.3)
+
+| Varyant | İçerik | Boyut |
+| --- | --- | --- |
+| `wear-ready` (önerilen) | yalnızca `armeabi-v7a` + `windowSwipeToDismiss=false` + `largeHeap=true` + watch feature | 237.366.524 bayt |
+| `wear-v7a` | yalnızca `armeabi-v7a` kütüphaneleri | 237.373.315 bayt |
+
+Kurulum (tek komut):
+
+```bash
+./scripts/install-wear-apk.sh ready <saat-ip>:<port>   # veya: v7a
+```
+
+Bu varyantlar **yerel test anahtarıyla** yeniden imzalanmıştır: Play Store
+güncellemesi ve Play Games imzası çalışmaz, kurulumdan önce eski paket
+kaldırılır (`adb uninstall`).
+
 ### Saatte çökme (crash) teşhisi
 
 Statik olarak elenenler (bkz. `reports/apk-inspect.md`): ABI eşliği tam (22/22
