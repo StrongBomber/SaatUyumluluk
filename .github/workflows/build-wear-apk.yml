@@ -86,63 +86,101 @@ jobs:
         id: variantb
         continue-on-error: true
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd work
+          LOG=../reports/wear-build-log.txt
+          : > "$LOG"
+          exec > >(tee -a "$LOG") 2>&1
+
+          set -x
           java -jar "$APKTOOL" d -s -f app-src.apk -o dec
+          DEC_RC=$?
+          set +x
+          if [ $DEC_RC -ne 0 ]; then
+            echo "APKTOOL DECODE BASARISIZ (rc=$DEC_RC)"
+            exit 1
+          fi
           rm -rf dec/lib/arm64-v8a
 
           echo "-- application android:theme --"
           grep -o 'android:theme="[^"]*"' dec/AndroidManifest.xml | head -3 || true
 
-          echo "-- manifest duzeltmeleri --"
           python3 - <<'PY'
-          import re, pathlib
-          p = pathlib.Path("dec/AndroidManifest.xml")
-          s = p.read_text(encoding="utf-8")
+          import re, pathlib, sys
 
-          # largeHeap ekle (yoksa)
+          mpath = pathlib.Path("dec/AndroidManifest.xml")
+          s = mpath.read_text(encoding="utf-8")
+
           if 'android:largeHeap' not in s:
               s = s.replace('<application', '<application android:largeHeap="true"', 1)
-
-          # watch feature ekle (yoksa) - application'dan once
           if 'android.hardware.type.watch' not in s:
               s = s.replace('<application',
                   '<uses-feature android:name="android.hardware.type.watch" android:required="false" />\n    <application', 1)
-
-          p.write_text(s, encoding="utf-8")
+          mpath.write_text(s, encoding="utf-8")
           print("manifest guncellendi")
 
-          # Tema dosyalarinda windowSwipeToDismiss=false ekle
+          # Uygulamanin temasini bul
+          app_theme = None
+          m = re.search(r'<application[^>]*android:theme="@style/([^"]+)"', s)
+          if m:
+              app_theme = m.group(1)
+          print("application theme:", app_theme)
+
+          ITEM = '<item name="android:windowSwipeToDismiss">false</item>'
+
+          def patch_style(text, name):
+              # yalnizca verilen isimdeki, kendini kapatmayan <style ...> blogu
+              pat = re.compile(r'(<style\s+[^>]*name="' + re.escape(name) + r'"[^>]*(?<!/)>)')
+              return pat.sub(lambda mo: mo.group(1) + "\n        " + ITEM, text, count=1), len(pat.findall(text))
+
           changed = []
-          for f in pathlib.Path("dec/res").rglob("*.xml"):
-              try:
+          if app_theme:
+              for f in pathlib.Path("dec/res").rglob("*.xml"):
+                  try:
+                      t = f.read_text(encoding="utf-8")
+                  except Exception:
+                      continue
+                  if ITEM in t or app_theme not in t:
+                      continue
+                  new, _ = patch_style(t, app_theme)
+                  if new != t:
+                      f.write_text(new, encoding="utf-8")
+                      changed.append(str(f))
+                      print("tema yamalandi:", f)
+
+          if not changed:
+              # geri donus: values/styles.xml icindeki kendini kapatmayan tum style bloklari
+              for f in list(pathlib.Path("dec/res/values").glob("styles*.xml")):
                   t = f.read_text(encoding="utf-8")
-              except Exception:
-                  continue
-              if "<style" not in t or "windowSwipeToDismiss" in t:
-                  continue
-              # Her <style ...> blogunun icine ekle
-              new = re.sub(r"(<style\b[^>]*>)", r"\1\n        <item name=\"android:windowSwipeToDismiss\">false</item>", t)
-              if new != t:
-                  f.write_text(new, encoding="utf-8")
-                  changed.append(str(f))
-          print("tema dosyalari:", len(changed))
-          for c in changed[:10]:
-              print("  ", c)
+                  if ITEM in t:
+                      continue
+                  new = re.sub(r'(<style\s+[^>]*(?<!/)>)', lambda mo: mo.group(1) + "\n        " + ITEM, t)
+                  if new != t:
+                      f.write_text(new, encoding="utf-8")
+                      changed.append(str(f))
+                      print("yedek plan uygulandi:", f)
+
+          print("degisen dosya sayisi:", len(changed))
+          if not changed:
+              print("UYARI: tema bulunamadi, windowSwipeToDismiss eklenemedi")
           PY
 
           echo "-- yeniden paketle --"
-          if ! java -jar "$APKTOOL" b dec -o ready-unsigned.apk 2>&1 | tail -5; then
-            echo "ilk deneme basarisiz, --use-aapt2 ile tekrar"
-            java -jar "$APKTOOL" b dec -o ready-unsigned.apk --use-aapt2 2>&1 | tail -5
+          java -jar "$APKTOOL" b dec -o ready-unsigned.apk
+          BRC=$?
+          if [ $BRC -ne 0 ]; then
+            echo "build rc=$BRC, --use-aapt2 ile tekrar"
+            java -jar "$APKTOOL" b dec -o ready-unsigned.apk --use-aapt2
+            BRC=$?
           fi
+          [ $BRC -eq 0 ] || { echo "APKTOOL BUILD BASARISIZ"; exit 1; }
           ls -l ready-unsigned.apk
 
-          "$BT/zipalign" -f -p 4 ready-unsigned.apk ready-aligned.apk
+          "$BT/zipalign" -f -p 4 ready-unsigned.apk ready-aligned.apk || exit 1
           "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
-            --out Subway+Surfers_3.70.3_wear-ready.apk ready-aligned.apk
+            --out Subway+Surfers_3.70.3_wear-ready.apk ready-aligned.apk || exit 1
           "$BT/apksigner" verify --verbose Subway+Surfers_3.70.3_wear-ready.apk | head -8
-          ls -l Subway+Surfers_3.70.3_wear-ready.apk
+          echo "VARYANT B TAMAM"
 
       - name: Uretilenleri dogrula
         run: |
